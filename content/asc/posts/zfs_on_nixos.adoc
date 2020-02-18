@@ -1,0 +1,884 @@
+d//change the last file path depending on project
+:scriptsdir: ../doc/scripts/matching
+:imagesdir: ../resources/zfs/
+:icons: font
+
+
+
+
+= Beginners Guide to Installing Nixos using ZFS
+:author: Ben Hougland
+:email: benjamin.hougland@gmail.com
+:revnumber: v1.0
+:revdate: 10.02.2020
+:revremark: First Draft
+:experimental:
+:toc: left
+
+== Introduction
+=== Why use ZFS?
+
+If you are here then I expect you to have at least a basic understanding of the benfeits that the Nixos operating system and the ZFS file system provide.
+If not, then let me be the first one to tell you that you have reached the end of the internet and it is probably time you go to bed.
+You are readin g about a system setup that probably only .000000001% of all computer users use, but they happen to the smart users and I plan to follow in their footsteps and leave a trail of breadcrumbs behind.
+
+As for myself, I see many benefits of functional progamming and in general removing the amount of "inplace" changes, or mutation, in all levels of my technology stack. 
+I have moved from using a traditional Linux system to Nixos, from Python to Clojure, plan to use a database like Datomic instead of traditional mutating DBs such as Postgres, and I see the filesystem as just another step in this evolution.
+
+=== Why did I create this guide?
+
+I am a beginner at ZFS, so I hope this guide doesn't have too many errors or omissions.
+I have done my best to prevent any so included each and every step you will need to take to get this working.
+I want it to be a hand holding guide for the beginner like me who has trouble following the Nixos guides because they assume too much pre-existing knowledge from the reader.
+I used a combination of many guides in order to piece this one together, they are as follows:
+
+https://nixos.wiki/wiki/NixOS_on_ZFS[Nixos Wiki on ZFS]
+
+https://qfpl.io/posts/installing-nixos/[Nixos Installation without ZFS]
+
+https://elvishjerricco.github.io/2018/12/06/encrypted-boot-on-zfs-with-nixos.html[Nixos with ZFS and LUKS]
+
+Also, this guide is for me.  If I want to install this setup on another machine, then I don't want to have to research this information all over again.
+So, I borrowed, and in many cases outright plagerized, the information in the links above in making my guide.
+I hope the original authors don't mind too much :)
+
+=== What Will You Get By Following This Guide?
+
+WARNING: tis not done yet
+
+== Partitioning the Disk and ZFS
+
+=== Create Bootable Image
+
+I mentioned that I will not make many assumptions of your knowledge level in this guide, but I will expect you to know how to make a bootable image on a usb drive.
+In this guide I used the Minimal installtion CD image and Fedora Media Writer to create the image, but you can use other tools.
+
+=== Prepare for USB Booting, editing boot menu
+Now place the USB device in your computer and restart.
+During the boot process press whatever key your computer requires, mine is F1, to get into the boot menu.
+Once in the boot menu, ensure the following are selected:
+
+* Boot order will use the usb device before the harddrive
+* Disable safe boot
+* UEFI mode is enabled
+
+Now exit the boot menu.
+
+=== Booting and getting a root shell
+
+You will see a lot of activity with and terminal green colors, and when finished it will end with a simple green root Nixos prompt.
+You are logged-in automatically as nixos. The nixos user account has an empty password so you can use sudo without a password.
+[INFORMATION]
+.The Nixos Prompt
+====
+
+[nixos@nixos:~]$
+====
+However, some command take the root shell, so type the following:
+....
+sudo -s
+....
+Now your prompt should be in red and end with a "#"
+
+=== Setup Networking
+
+WARNING: This section on WIFI did not work for me and I had to plug in an ethernet cable
+
+Networking is necessary for the installer, since it will download lots of stuff (such as source tarballs or Nixpkgs channel binaries).
+A wired connection is preferred, but I will use Wifi incase you don't have access to ethernet.
+To make that happen do the following:
+
+* Generate a minimal wpa_supplicant configuration. The $SSID and $PASSPHRASE are variables, enter your information.
+
+....
+wpa_passphrase $SSID $PASSPHRASE > /etc/wpa_supplicant.conf
+....
+* Verify the configuration:
+....
+nano /etc/wpa_supplicant.conf
+....
+
+[INFORMATION]
+.wpa_supplicant.conf information
+====
+....
+network={
+ssid="MYSSID"
+#psk="passphrase"
+psk=59e0d07fa4c7741797a4e394f38a5c321e3bed51d54ad5fcbd3f84bc7415d73d
+}
+....
+====
+Great, now exit Nano
+btn:[Ctrl]+btn:[X]
+
+* Restarts WPA Supplicant, which gives us WiFi for now
+....
+systemctl restart wpa_supplicant.service
+....
+
+=== Partitioning
+Time to destroy some valuable data! Just kidding. You won’t make a mistake, and more importantly, you have 3 copies of your data on at least 2 different types of storage media and in 2 different physical locations that are unlikely to be hit by the same disaster right? Right?!
+
+Jokes aside, *this process will wipe anything on the disk*. Consider yourself warned.
+
+As I understand it, a UEFI boot device requires a GUID partition table (GPT). Hence we’ll be using gdisk instead of the venerable fdisk. If you’re installing on a system that doesn’t use UEFI, then you can do a similar job with good ’ol fdisk.
+
+To start, we’ll delete any existing partitions and start with a clean slate.  We will do the following:
+
+* Identify the disk we are going to partition.  You will probably see two, one for the harddrive and the other for the USB drive.
+The one you want will probably be something like *sda* or *nvme0n1*. The example below uses sda.
+
+....
+lsblk
+....
+
+
+* Open gdisk on the disk we're installing on (sda)
+
+....
+gdisk /dev/sda
+....
+
+[INFORMATION]
+.gdisk output
+====
+....
+GPT fdisk (gdisk) version 1.0.4
+
+Partition table scan:
+  MBR: protective
+  BSD: not present
+  APM: not present
+  GPT: present
+
+Found valid GPT with protective MBR; using GPT.
+....
+====
+The steps below will just create a empty parition table.
+....
+Command (? for help): o
+This option deletes all partitions and creates a new protective MBR.
+Proceed? (Y/N): Y
+
+Command (? for help): o
+This option deletes all partitions and creates a new protective MBR.
+Proceed? (Y/N): Y
+
+Command (? for help): w
+
+Final checks complete. About to write GPT data. THIS WILL OVERWRITE EXISTING
+PARTITIONS!!
+
+Do you want to proceed? (Y/N): Y
+OK; writing new GUID partition table (GPT) to /dev/sda.
+The operation has completed successfully.
+....
+
+Okay, now we need to setup the paritions using the by-id aliases for devices, otherwise ZFS can choke on imports.
+
+* find Id of /dev/sda (or whatever your disk is):
+
+....
+ls -l /dev/disk/by-id/
+....
+[INFORMATION]
+.Disk Information
+====
+....
+total 0
+lrwxrwxrwx 1 root root  9 Jul 16 09:02 ata-HFS5124-33200d_F15110000d6930F35 -> ../../sda
+lrwxrwxrwx 1 root root  9 Jul 16 09:02 usb-3600050e02e433200d7110000d6930000 -> ../../sdb
+lrwxrwxrwx 1 root root 10 Jul 16 09:02 usb-3600050e02e433200d7110000d6930000-part1 -> ../../sda1
+lrwxrwxrwx 1 root root 10 Jul 16 09:02 ubs-3600050e02e433200d7110000d6930000-part2 -> ../../sda2
+....
+====
+Now, we are going to have to reference this a lot in the next steps and I don't want to have to write it out a bunch of times, so lets put it in a variable.
+In actuality, I don't even want to type if one time so lets do a hacky job and commmand line foo and have the command output populate the variable.  This regular expression identifies the beginning of the id.
+This works because I don't have any partitions yet.
+
+....
+SDA_ID="$(ls /dev/disk/by-id/ | grep '^[ata]')"
+....
+
+Lets see if we got what we want (it should be a single value):
+....
+echo $SDA_ID
+....
+
+You should see the value of the sda drive from above.
+Now we will combine the id with the device path:
+....
+DISK=/dev/disk/by-id/$SDA_ID
+....
+
+Next, we are going to create the partitions in three seperate commands:
+....
+sgdisk -a1 -n2:34:2047 -t2:EF02 $DISK  //<1>
+
+sgdisk -n3:1M:+512M -t3:EF00 $DISK //<2>
+
+sgdisk -n1:0:0 -t1:BF01 $DISK //<3>
+....
+
+<1> Partition 2 will be the boot partition, needed for legacy (BIOS) boot
+<2> If you need EFI support, make an EFI partition.
+<3> Partition 1 will be the main ZFS partition, using up the remaining space on the drive.
+
+=== Configuring ZFS
+
+WARNING: Do I need a swap partition here, see https://gist.github.com/dysinger/a0031aca70f9dc8df989010c88fc9c27
+
+
+Below is the basic structure we will be creating.  Notice than the ZFS pools and datasets are all contained in SDA1.  We will have a home data set that we will snapshot and a nixos dataset that we will not snapshot as Nixos does a good job at keeping that information in sync and it isn't necessary to backup.
+[ditaa]
+....
+    +-----+
++---|sda1 |
+|   +-+---+
+| +---|----------ZFS--------+
+| |   |   /-----------+     |
+| |   +---|cRED rpool |     |
+| |       +-+---------/     |
+| |         |               |
+| |         +---swap        |
+| |         +---home        |
+| |         +---root        |
+| |             |           |
+| |             +---nixos   |
+| +-------------------------+
+|   +-----+
++---|sda2 |
+|   +-----+
+|
+|   +-----+
++---|sda3 |
+    +-----+
+....
+
+.Partition Mount
+[%header, cols=3*]
+|===
+|Partition
+|Mount Point
+|Partition Type
+
+
+|sda1
+|/mnt/rpool
+|ZFS
+
+
+|sda2
+|
+|boot (BIOS)
+
+
+|sda3
+|/mnt/boot
+|EFI
+|===
+
+.ZFS rpool (encrypted)
+[%header, cols=3*]
+|===
+|Dataset
+|mountpoint
+|Snapshots
+
+
+
+|home
+|rpool/home
+|Yes
+
+|nixos
+|rpool/root/nixos
+|No
+|===
+
+==== Create the ZFS Encrypted Pool
+This is going to be a single disk on our laptop and it will use encryption, so issue this command:
+
+....
+zpool create -o ashift=12 -o altroot="/mnt" -O mountpoint=none -O encryption=aes-256-gcm -O keyformat=passphrase rpool $DISK-part1
+....
+
+It will then ask for you to create a passphrase:
+
+....
+Enter passphrase:
+Re-enter passphrase:
+....
+
+==== Create the ZFS Data Sets
+
+Issue the following three commands to create the data sets shown in in the diagram.
+Note that the home pool will have automatic snapshots turned on.
+
+....
+zfs create -o mountpoint=none rpool/root
+zfs create -o mountpoint=legacy rpool/root/nixos
+zfs create -o mountpoint=legacy -o com.sun:auto-snapshot=true rpool/home
+....
+
+==== Mount the ZFS filesystems
+
+We are only going to mount the filesystem, so we only issue these commands:
+
+....
+mount -t zfs rpool/root/nixos /mnt
+
+mkdir /mnt/home
+mount -t zfs rpool/home /mnt/home
+....
+
+Now we need to setup our boot EFI as a non-ZFS partition
+....
+mkfs.vfat $DISK-part3
+mkdir /mnt/boot
+mount $DISK-part3 /mnt/boot
+....
+
+Yea!! That part is over, now on to the fun part.
+
+== Configuring Nixos before installation
+
+In this section we are going to add the necessary entry to the Nixos configuration files to fully use the ZFS filesystems we created.
+In addition, We will also add some software to make our initial login feel more like a useful, but still barebones, desktop environment.
+At the expense of brevity, I am going to include the full configuration files so there is no ambiguity on what edits I am making and where.
+I applogize to all those of you who are reading this on their smart watch.
+
+=== Generate the NIXOS Config
+
+....
+nixos-generate-config  --root /mnt
+....
+
+This command will create two configuration files:
+
+* hardware-configuration.nix - for hardware configuration
+* configuration.nix - for software, etc
+
+=== Get Networking Host ID
+
+Before we start editing the configuration files, lets first get our machines networking host id, which is needed by ZFS.
+The easiest way to get a value for this options is to run this command:
+
+....
+head -c 8 /etc/machine-id
+....
+
+Write down the shell output as we will need it in a moment.
+
+=== Keys for unlocking ZFS encryption at boot
+
+I am not sure if this is needed as I only have one disk
+
+=== Reviewing the Hardware Configuration
+
+Lets open the hardware-configuration.nix file and see what we have.  Issue the following command:
+....
+nano /mnt/nixos/hardware=configuration.nix
+....
+
+[INFORMATION]
+.hardware-configuration.nix information
+====
+....
+{ config, lib, pkgs, ... }:
+
+{
+  imports =
+    [ <nixpkgs/nixos/modules/installer/scan/not-detected.nix>
+    ];
+
+  boot.initrd.availableKernelModules = [ "xhci_pci" "ahci" "usb_storage" "sd_mod" "sdhci_pci" ];
+  boot.initrd.kernelModules = [ ];
+  boot.kernelModules = [ "kvm-intel" ];
+  boot.extraModulePackages = [ ];
+
+  fileSystems."/" =
+    { device = "rpool/root/nixos";
+      fsType = "zfs";
+    };
+
+  fileSystems."/home" =
+    { device = "rpool/home";
+      fsType = "zfs";
+    };
+
+  fileSystems."/boot" =
+    { device = "/dev/disk/by-uuid/3173-2880";
+      fsType = "vfat";
+    };
+
+  swapDevices = [];
+
+  nix.maxJobs = lib.mkDefault 4;
+  powerManagement.cpuFreqGovernor = lib.mkDefault "powersave";
+}
+....
+====
+
+This looks good, so lets exit the Nano editor by pressing kbd:[Ctrl + X]
+
+
+=== Edit the Nixos Configuration file for ZFS
+
+Lets open the configuration.nix file and add the necessary ZFS information:
+....
+nano /mnt/etc/nixos/configuration.nix
+....
+
+Below is my configuration.nix file after making the edits.
+Please review each of the callouts and add them to your file.
+
+
+....
+# Edit this configuration file to define what should be installed on
+# your system.  Help is available in the configuration.nix(5) man page
+# and in the NixOS manual (accessible by running ‘nixos-help’).
+
+{ config, pkgs, ... }:
+
+{
+  imports =
+    [ # Include the results of the hardware scan.
+      ./hardware-configuration.nix
+    ];
+
+  # Use the systemd-boot EFI boot loader.
+  boot.loader.systemd-boot.enable = true;
+  boot.loader.efi.canTouchEfiVariables = true;
+  # Add ZFS support.
+  boot.supportedFilesystems = ["zfs"]; //<1>
+  boot.zfs.requestEncryptionCredentials = true; //<2>
+
+  networking.hostId = "238330f5"; //<3>
+  # networking.hostName = "nixos"; # Define your hostname.
+  # networking.wireless.enable = true;  # Enables wireless support via wpa_supplicant.
+
+  # Configure network proxy if necessary
+  # networking.proxy.default = "http://user:password@proxy:port/";
+  # networking.proxy.noProxy = "127.0.0.1,localhost,internal.domain";
+
+  # Select internationalisation properties.
+  # i18n = {
+  #   consoleFont = "Lat2-Terminus16";
+  #   consoleKeyMap = "us";
+  #   defaultLocale = "en_US.UTF-8";
+  # };
+
+  # Set your time zone.
+  # time.timeZone = "Europe/Amsterdam";
+
+  # List packages installed in system profile. To search, run:
+  # $ nix search wget
+  # environment.systemPackages = with pkgs; [
+  #   wget vim
+  # ];
+
+  # Some programs need SUID wrappers, can be configured further or are
+  # started in user sessions.
+  # programs.mtr.enable = true;
+  # programs.gnupg.agent = { enable = true; enableSSHSupport = true; };
+
+  # List services that you want to enable:
+  # Enable the OpenSSH daemon.
+  # services.openssh.enable = true;
+
+  # ZFS services
+  services.zfs.autoSnapshot.enable = true; //<4>
+  services.zfs.autoScrub.enable = true; //<5>
+
+  # Open ports in the firewall.
+  # networking.firewall.allowedTCPPorts = [ ... ];
+  # networking.firewall.allowedUDPPorts = [ ... ];
+  # Or disable the firewall altogether.
+  # networking.firewall.enable = false;
+
+  # Enable CUPS to print documents.
+  # services.printing.enable = true;
+
+  # Enable sound.
+  # sound.enable = true;
+  # hardware.pulseaudio.enable = true;
+
+  # Enable the X11 windowing system.
+  # services.xserver.enable = true;
+  # services.xserver.layout = "us";
+  # services.xserver.xkbOptions = "eurosign:e";
+
+  # Enable touchpad support.
+  # services.xserver.libinput.enable = true;
+
+  # Enable the KDE Desktop Environment.
+  # services.xserver.displayManager.sddm.enable = true;
+  # services.xserver.desktopManager.plasma5.enable = true;
+
+  # Define a user account. Don't forget to set a password with ‘passwd’.
+  # users.users.jane = {
+  #   isNormalUser = true;
+  #   extraGroups = [ "wheel" ]; # Enable ‘sudo’ for the user.
+  # };
+
+  # This value determines the NixOS release with which your system is to be
+  # compatible, in order to avoid breaking some software such as database
+  # servers. You should change this only after NixOS release notes say you
+  # should.
+  system.stateVersion = "19.09"; # Did you read the comment?
+}
+....
+<1> Enable ZFS
+<2> Prompt User for password to unencrypt root ZFS filesystem.
+<3> Put the network Id that we found in the Networking step
+<4> Enable auto snapshots for the home folder, that was a parameter we set when we created it. I added the comment to let you know these entries were related to ZFS.
+<5> Autoscrub will ...
+
+Now save your edits in Nano by pressing  kbd:[Ctrl + O]
+
+It will ask to if you want to change the filename, so just press kbd:[Enter]
+
+=== Edit the Nixos Configuration file for basic usability
+
+In the last section we edited the configuration.nix file for the entries needed for ZFS.
+In this section we will make some additional edits that will give us a better initial experience when we actually install and start to use the system.
+I spit the two sections so you would't be confused as to what edits were related to ZFS and which ones where just preference.
+
+Okay, so you should still have Nano open to the configuration.nix file.  Lets make some additional edits, at the end your file should look like this:
+
+
+....
+# Edit this configuration file to define what should be installed on
+# your system.  Help is available in the configuration.nix(5) man page
+# and in the NixOS manual (accessible by running ‘nixos-help’).
+
+{ config, pkgs, ... }:
+
+{
+  imports =
+    [ # Include the results of the hardware scan.
+      ./hardware-configuration.nix
+    ];
+
+  # Use the systemd-boot EFI boot loader.
+  boot.loader.systemd-boot.enable = true;
+  boot.loader.efi.canTouchEfiVariables = true;
+  # Add ZFS support.
+  boot.supportedFilesystems = ["zfs"];
+  boot.zfs.requestEncryptionCredentials = true;
+
+  networking.hostId = "238330f5";
+  networking.hostName = "nixos"; # Define your hostname.
+  # networking.wireless.enable = true;  # Enables wireless support via wpa_supplicant.
+
+  # Configure network proxy if necessary
+  # networking.proxy.default = "http://user:password@proxy:port/";
+  # networking.proxy.noProxy = "127.0.0.1,localhost,internal.domain";
+
+  # Select internationalisation properties. //<1>
+   i18n = {
+    consoleFont = "Lat2-Terminus16";
+    consoleKeyMap = "us";
+    defaultLocale = "en_US.UTF-8";
+  };
+
+  # Set your time zone.
+  time.timeZone = "US/Eastern"; //<1>
+
+  nixpkgs.config.allowUnfree = true; //<2>
+
+  # List packages installed in system profile. To search, run:
+  # $ nix search wget
+  environment.systemPackages = with pkgs; [ //<2>
+
+  # Commandline tools
+  coreutils
+  gitAndTools.gitFull
+  man
+  tree
+  wget
+  vim
+  mkpasswd
+
+  # GUI Apps
+  chromium
+  gnome3.dconf-editor
+  ];
+
+  # Some programs need SUID wrappers, can be configured further or are
+  # started in user sessions.
+  # programs.mtr.enable = true;
+  # programs.gnupg.agent = { enable = true; enableSSHSupport = true; };
+
+  # List services that you want to enable:
+  # Enable the OpenSSH daemon.
+  # services.openssh.enable = true;
+
+  # ZFS services
+  services.zfs.autoSnapshot.enable = true;
+  services.zfs.autoScrub.enable = true;
+
+  # To use lori for development
+  services.lorri.enable = true; //<3>
+
+  # Open ports in the firewall.
+  # networking.firewall.allowedTCPPorts = [ ... ];
+  # networking.firewall.allowedUDPPorts = [ ... ];
+  # Or disable the firewall altogether.
+  # networking.firewall.enable = false;
+
+  # Enable CUPS to print documents.
+  # services.printing.enable = true;
+
+  # Enable sound.
+  # sound.enable = true;
+  hardware.pulseaudio.enable = true; //<4>
+
+  # Tlp power managment
+  services.tlp.enable = true; //<5>
+
+  # Flatpak enable
+  services.flatpak.enable = true; //<6>
+
+  # Enable the X11 windowing system. //<7>
+  services.xserver.enable = true;
+  services.xserver.layout = "us";
+  # services.xserver.xkbOptions = "eurosign:e";
+
+  # Enable touchpad support.
+  services.xserver.libinput.enable = true; //<8>
+
+  # Enable the KDE Desktop Environment.
+  # services.xserver.displayManager.sddm.enable = true;
+  # services.xserver.desktopManager.plasma5.enable = true;
+
+  # Enable the Gnome desktop environment //<9>
+  services.xserver.displayManager.gdm.enable = true;
+  services.xserver.desktopManager.gnome3.enable = true;
+
+  # Define a user account. Don't forget to set a password with ‘passwd’.
+  # users.users.jane = {
+  #   isNormalUser = true;
+  #   extraGroups = [ "wheel" ]; # Enable ‘sudo’ for the user.
+  # };
+
+  # This value determines the NixOS release with which your system is to be
+  # compatible, in order to avoid breaking some software such as database
+  # servers. You should change this only after NixOS release notes say you
+  # should.
+  system.stateVersion = "19.09"; # Did you read the comment?
+}
+....
+It goes without saying that you will first need to uncomment these sections:
+
+<1> update international setting and timezone, and update according to your preferences.
+<2> Add packages that you want to use.  Make sure to include the mkpasswd because you will need it later. I didn't add much so you may want to go to https://nixos.org/nixos/packages.html?channel=nixos-19.09[nix package search] and add more.
+<3> Optional: enable lorri if you want to do any development on Nixos
+<4> Enable pulse audio
+<5> Optional: Add tlp power management service
+<6> Enable flatpak for that software which isn't in the nixos repo.
+<7> Enable X11
+<8> Optional: Enable touchpad for laptop
+<9> Set desktop environment to Gnome.  If you want KDE, then just uncomment that section.
+
+If you see any other options above that you need enable, such as printing, please feel free to do so.
+We will setup the user after installation so we can created a hashed password to put in the configuration file.
+
+== Install and Additional Setup
+
+Now lets test out the system
+....
+nixos-install
+....
+After it finishes installing, it will ask you for your root password, make sure you remember it!
+
+Remove the USB drive and type:
+....
+reboot
+....
+
+=== Login and Setup User
+
+The system will reboot then prompt you to provide your password to the ZFS encrypted pool "rpool".
+Provide the password and the system will continue to the Gnome Login screen.  You don't have a user yet, so you will have to login as root.
+....
+username = type "root"
+password = type the root password you entered in the nixos-install step
+....
+
+Now you should see a desktop environment, so lets setup a user.
+
+=== Setup User
+
+In order to setup a user we are going to need to provide a hashed password. So, issue this command:
+....
+mkpasswd -m sha-512
+....
+
+Copy the entire password, even it ends in a period.
+
+Open the configuration file.  This time we will use vim because it can get access to the shell, which we will need for the hasshedPassword.
+Remember, in order type you must first press btn:[i] and to exit edit mode press btn:[esc].
+....
+vim /etc/nixos/configuration.nix
+....
+
+Make it look like mine below, but change the user "ben" to whatever you want your username to be:
+
+....
+# Edit this configuration file to define what should be installed on
+# your system.  Help is available in the configuration.nix(5) man page
+# and in the NixOS manual (accessible by running ‘nixos-help’).
+
+{ config, pkgs, ... }:
+
+{
+  imports =
+    [ # Include the results of the hardware scan.
+      ./hardware-configuration.nix
+    ];
+
+  # Use the systemd-boot EFI boot loader.
+  boot.loader.systemd-boot.enable = true;
+  boot.loader.efi.canTouchEfiVariables = true;
+  # Add ZFS support.
+  boot.supportedFilesystems = ["zfs"];
+  boot.zfs.requestEncryptionCredentials = true;
+
+  networking.hostId = "238330f5";
+  networking.hostName = "nixos"; # Define your hostname.
+  # networking.wireless.enable = true;  # Enables wireless support via wpa_supplicant.
+
+  # Configure network proxy if necessary
+  # networking.proxy.default = "http://user:password@proxy:port/";
+  # networking.proxy.noProxy = "127.0.0.1,localhost,internal.domain";
+
+  # Select internationalisation properties.
+   i18n = {
+    consoleFont = "Lat2-Terminus16";
+    consoleKeyMap = "us";
+    defaultLocale = "en_US.UTF-8";
+  };
+
+  # Set your time zone.
+  time.timeZone = "US/Eastern";
+
+  # List packages installed in system profile. To search, run:
+  # $ nix search wget
+  environment.systemPackages = with pkgs; [
+
+  # Commandline tools
+  coreutils
+  gitAndTools.gitFull
+  man
+  tree
+  wget
+  vim
+  mkpasswd
+
+  # GUI Apps
+  chromium
+  gnome3.gnome-tweaks
+  gnome3.dconf-editor
+  ];
+
+  # Some programs need SUID wrappers, can be configured further or are
+  # started in user sessions.
+  # programs.mtr.enable = true;
+  # programs.gnupg.agent = { enable = true; enableSSHSupport = true; };
+
+  # List services that you want to enable:
+  # Enable the OpenSSH daemon.
+  # services.openssh.enable = true;
+
+  # ZFS services
+  services.zfs.autoSnapshot.enable = true;
+  services.zfs.autoScrub.enable = true;
+
+  # To use lori for development
+  services.lorri.enable = true;
+
+  # Open ports in the firewall.
+  # networking.firewall.allowedTCPPorts = [ ... ];
+  # networking.firewall.allowedUDPPorts = [ ... ];
+  # Or disable the firewall altogether.
+  # networking.firewall.enable = false;
+
+  # Enable CUPS to print documents.
+  # services.printing.enable = true;
+
+  # Enable sound.
+  # sound.enable = true;
+  hardware.pulseaudio.enable = true;
+
+  # Tlp power managment
+  services.tlp.enable = true;
+
+  # Flatpak enable
+  services.flatpak.enable = true;
+
+  # Enable the X11 windowing system.
+  services.xserver.enable = true;
+  services.xserver.layout = "us";
+  # services.xserver.xkbOptions = "eurosign:e";
+
+  # Enable touchpad support.
+  services.xserver.libinput.enable = true;
+
+  # Enable the KDE Desktop Environment.
+  # services.xserver.displayManager.sddm.enable = true;
+  # services.xserver.desktopManager.plasma5.enable = true;
+
+  # Enable the Gnome desktop environment
+  services.xserver.displayManager.gdm.enable = true;
+  services.xserver.desktopManager.gnome3.enable = true;
+
+  # Define a user account. Don't forget to set a password with ‘passwd’.
+  users.mutableUsers = false; //<1>
+  users.users.ben = { //<2>
+    isNormalUser = true;
+    extraGroups = [ "wheel"  "video" "audio" "disk" "networkmanager"]; //<3>
+    hashedPassword = "$6$PG6zSaJ3kiXexR$wqSjTiGuV64lNIo5Hz6.X3BRQD2R124Kv4EwP1YeJRz0LwfLkLcShmVljeO8jDzYU/PZS5W3oQsxnwo/WeEKE."; //<4>
+   };
+
+  # This value determines the NixOS release with which your system is to be
+  # compatible, in order to avoid breaking some software such as database
+  # servers. You should change this only after NixOS release notes say you
+  # should.
+  system.stateVersion = "19.09"; # Did you read the comment?
+}
+....
+<1> Users will be defined in  the configuration file only
+<2> Change the username, in this case "ben"
+<3> Add the user to groups.
+<4> Type the element hashedPassword = " " (put your cursor between the quotations).
+Then type btn:[esc] to exit insert mode
+Type the following in Vim's command area by pressing btn:[:]
+....
+    r! mkpasswd -m sha-512
+....
+Vim will prompt you to enter a password, so enter it and the string should appear around your cursor. Make sure it is wrapped in quotes and the line ends with a semicolon.
+https://www.youtube.com/watch?v=imhkkctxr2A[more instruction if needed]
+
+Now save the file by ensuring you are not in insert mode kbd:[esc], then press kbd:[:] and execute the following command (write and quit):
+....
+wq
+....
+
+Whenever you make a change to configuration.nix and it want it to be the default going forward, then issue this command:
+....
+nixos-rebuild switch
+....
+
+Now lets reboot and check it out:
+....
+reboot
+....
+
+Great, now we have a user.  I hope this guide helped you, and please let me know if any part was confusing so I can updated it to be more clear.
+
+== Closing Thoughts
+
+We now should have a working Nixos system with a rocking ZFS file system.
